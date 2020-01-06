@@ -1,45 +1,38 @@
 #!/bin/sh
 
 # Make sure to:
-# 1) Name this file `backup.sh` and place it in /home/ubuntu
+# 1) Name this file `backup.sh` and place it in /home/ec2-user
 # 2) Run sudo apt-get install awscli to install the AWSCLI
 # 3) Run aws configure (enter s3-authorized IAM user and specify region)
 # 4) Fill in DB host + name
 # 5) Create S3 bucket for the backups and fill it in below (set a lifecycle rule to expire files older than X days in the bucket)
-# 6) Run sudo mkdir /data/tmp
-# 7) Run sudo chmod 777 /data/tmp/
-# 8) Run chmod +x backup.sh
-# 9) Test it out via ./backup.sh
-# 10) Set up a daily backup at midnight via `crontab -e`:
-#    0 0 * * * /home/ubuntu/backup.sh > /home/ubuntu/backup.log 2>&1
-# 
+# 6) Run chmod +x backup.sh
+# 7) Test it out via ./backup.sh
+# 8) Set up a daily backup at midnight via `crontab -e`:
+#    0 0 * * * /home/ec2-user/backup.sh > /home/ec2-user/backup.log
 
 # DB host (secondary preferred as to avoid impacting primary performance)
-
 HOST=localhost
-PORT=27017
 
 # DB name
-DBNAME=admin
-DBAUTH=admin
-DBUSER=admin
-DBPASS=1qaz2wsx
+DBNAME=************
+DBUSER=****
+PASS=******
 
 # S3 bucket name
-BUCKET=mongo-backup
+BUCKET=******
 
 # Linux user account
 USER=ec2-user
 
 # Current time
 TIME=`/bin/date +%d-%m-%Y-%T`
-QDATE=`/bin/date --date='-6 days' +%Y-%m-%d`
 
 # Backup directory
-DEST=/data/tmp/bck
+DEST=/home/$USER/tmp
 
 # Tar file of backup directory
-TAR=$DEST/../$TIME.tar.bz2
+TAR=$DEST/../$TIME.tar
 
 # Create backup dir (-p to avoid warning if already exists)
 /bin/mkdir -p $DEST
@@ -48,15 +41,10 @@ TAR=$DEST/../$TIME.tar.bz2
 echo "Backing up $HOST/$DBNAME to s3://$BUCKET/ on $TIME";
 
 # Dump from mongodb host into backup directory
-# mongodump -h $HOST -d $DBNAME -o $DEST
-echo "mongoexport --authenticationDatabase $DBAUTH -u $DBUSER -p $DBPASS -h $HOST:$PORT -d $DBNAME -o ./collection_name.json -c collection_name --query '{ \"date\": { $lt: \"$QDATE\" } }'"
-mongoexport --authenticationDatabase $DBAUTH -u $DBUSER -p $DBPASS -h $HOST:$PORT -d $DBNAME -o $DEST/collection_name.json -c collection_name --query '{ "date": { $lt: "'$QDATE'" } }'
-
-echo "mongo $DBNAME --eval 'db.collection_name.deleteMany( { \"date\": { $lt: \"$QDATE\" } } );'"
-mongo  --authenticationDatabase $DBAUTH -u $DBUSER -p $DBPASS $HOST:$PORT/$DBNAME --eval 'db.collection_name.deleteMany( { "date": { $lt: "'$QDATE'" } } );'
+/usr/bin/mongodump -h $HOST -d $DBNAME -u $DBUSER -p $PASS -o $DEST --authenticationDatabase admin
 
 # Create tar of backup directory
-/bin/tar -jcvf $TAR -C $DEST .
+/bin/tar cvf $TAR -C $DEST .
 
 # Upload tar to s3
 /usr/bin/aws s3 cp $TAR s3://$BUCKET/
@@ -66,7 +54,18 @@ mongo  --authenticationDatabase $DBAUTH -u $DBUSER -p $DBPASS $HOST:$PORT/$DBNAM
 
 # Remove backup directory
 /bin/rm -rf $DEST
+ 
+
+date_sevendays=$(date +%F --date='7 day ago')
+echo "removing before $date_sevendays"
+Bucket="********"
+olddata=$(aws s3api list-objects --bucket $Bucket  --query "Contents[?LastModified<='$date_sevendays'].Key")
+for s3objectname in $olddata; do
+if [[ "$s3objectname" != "["  &&  "$s3objectname" != "]" ]];then
+filename=$( echo "$s3objectname" | cut -d ',' -f 1)
+aws s3 rm  s3://$Bucket/${filename//\"} 
+fi 
+done 
 
 # All done
-echo "Backup available at https://s3.amazonaws.com/$BUCKET/$QDATE_$TIME.tar.bz2"
-
+echo "Backup available at https://s3.amazonaws.com/$BUCKET/$TIME.tar"
